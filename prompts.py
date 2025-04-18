@@ -1,15 +1,16 @@
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain.prompts import PromptTemplate
 
 
 class Prompt:
-    def table_selector_prompt(self):
+    def table_selection_prompt(self):
         return ChatPromptTemplate.from_messages([
             ("system",
             """
             You are a expert of database.
             Analyze the user's question and determine which table to query.
 
-            Question: {messages[-1].content}
+            Look at the most recent user message in the message history and base your decision on it.
 
             Available tables:
             {available_tables}
@@ -38,12 +39,35 @@ class Prompt:
 
             """
             ),
-            # ("human", "{question}"),
-            MessagesPlaceholder(variable_name="messages")
+            ("human", "{question}"),
         ])
     
 
-    def sql_query_generator_prompt(self):
+    def table_selector_prompt(self):
+        return ChatPromptTemplate.from_messages([
+            ("system", 
+            """
+            You are a database table selector specialized in water management systems.
+            Your role is to analyze user queries and select the most relevant tables for data retrieval.
+
+            User question: {question}
+            
+            You have access to the following tools: {tools}. 
+            The available tools are: {tool_names}.
+
+            [IMPORTANT] Your response MUST be in the following JSON dictionary format ONLY:
+            ```json
+            TABLE_NAME1: Selection reason in Korean, TABLE_NAME2: Selection reason in Korean
+            ```
+            Do not include any explanation or other text outside of this JSON format.
+            """
+            ),
+            MessagesPlaceholder(variable_name="messages"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ])
+    
+
+    def sql_query_generation_prompt(self):
         return ChatPromptTemplate.from_messages([
             ("system",
              """
@@ -51,8 +75,9 @@ class Prompt:
             Your task is to generate a SQL query EXCLUSIVELY for the table {table_name}.
             
             Current task: Generate a query for {table_name} table only
-            User's question: {messages[-1].content}
             
+            Look at the most recent user message in the message history and base your decision on it.
+
             Schema Info:
             {schema_info}
 
@@ -135,220 +160,106 @@ class Prompt:
 
 
             """
-             ),
-            # ("human", "{question}"),
-            MessagesPlaceholder(variable_name="messages")
+            ),
+            ("human", "{question}"),
         ])
 
 
-
-
-    def table_selection_prompt(self):
+    def query_generator_prompt(self):
         return ChatPromptTemplate.from_messages([
-            ("system",
-             """
-            당신은 데이터베이스 전문가입니다.
-            사용자의 질문을 분석하여 어떤 테이블을 조회해야 할지 결정해주세요.
-
-            Question: {question}
-
-            사용 가능한 테이블:
-                - TB_C_RT: 실시간 측정 데이터 테이블. 센서의 실시간 측정값 저장
-                - TB_AI_C_RT: AI 분석 결과 테이블. AI 예측값과 분석 결과 저장
-                - TB_AI_C_CTR: AI 제어 결과 테이블. AI 제어 명령과 결과 저장
-                - TB_TAG_MNG: 태그 관리 테이블. 센서 등의 메타데이터 저장
-                - TB_AI_C_ALM: AI 알람 테이블. 추천 모드 시 알람 결과 저장
-                - TB_AI_C_INIT: AI 알고리즘의 초기 설정 테이블. 상한, 하한 및 초기 설정 값을 저장
-
-            1. 사용자의 질문이 원천 데이터와 관련되어 있으면 TB_C_RT 테이블을 선택해야 합니다.
-            2. 사용자의 질문이 AI 분석 결과와 관련되어 있으면 TB_AI_C_RT 테이블을 선택해야 합니다. 질문에 'AI'가 붙어있지 않아도 문맥이 AI 분석 결과와 관련되어 있으면 TB_AI_C_RT 테이블을 선택해야 합니다.
-            3. 사용자의 질문이 AI 제어 결과와 관련되어 있으면 TB_AI_C_CTR 테이블을 선택해야 합니다.
-            4. 사용자의 질문이 초기 설정값 등과 관련되어 있으면 TB_AI_C_INIT 테이블을 선택해야 합니다.
-            5. 테이블을 하나만 선택해야 하는 것은 아닙니다. 여러 테이블이 필요한 경우 모두 선택해주세요.
-        
-            응답 형식:
-                테이블: [테이블명1, 테이블명2, ...]
-                이유: [선택 이유 설명]
-
-            테이블은 반드시 위 목록에 있는 테이블만 선택해야 합니다.
-            여러 테이블이 필요한 경우 모두 나열하세요.
-            """),
-            ("human", "{question}")
-        ])
-
-
-    def sql_generation_prompt(self):
-
-        sql_query_format = """
-                "TABLE_NAME_1": "SQL_QUERY_1",
-                "TABLE_NAME_2": "SQL_QUERY_2",
-                ...
-        """
-
-        sql_query_format_example = """
-                "TB_TAG_MNG": "SELECT * FROM TB_TAG_MNG;",
-                "TB_AI_C_INIT": "SELECT * FROM TB_AI_C_INIT;",
-                "TB_AI_C_RT": "SELECT * FROM TB_AI_C_RT WHERE UPD_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 1 HOUR);",
-                "TB_C_RT": "SELECT * FROM TB_C_RT WHERE TAG_SN IN (SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(TB_TAG_MNG.TAG_SN, '.', 2), '.', -1) FROM TB_TAG_MNG WHERE AI_CD = 'C' AND DP LIKE '%원수 탁도%' AND TAG_SN NOT LIKE '%AOS%' AND UPD_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 3 HOUR)) ORDER BY UPD_TI DESC LIMIT 10;",
-                "TB_AI_C_CTR": "SELECT * FROM TB_AI_C_CTR WHERE TAG_SN IN (SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(TB_TAG_MNG.TAG_SN, '.', 2), '.', -1) FROM TB_TAG_MNG WHERE AI_CD = 'C' AND DP LIKE '%원수 탁도%' AND TAG_SN NOT LIKE '%AOS%' AND UPD_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 3 HOUR)) ORDER BY UPD_TI DESC LIMIT 10;",
-                "TB_AI_C_ALM": "SELECT * FROM TB_AI_C_ALM WHERE ALM_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 1 HOUR);",
-        """
-
-        system_message = """
-            You are a SQL expert with a strong attention to detail.
-
-            You can define SQL queries, analyze queries results and interpretate query results to response an answer.
-
-            You can use the following table schemas and relationships to generate a SQL query:
-            Schema Info:
-            {schema_info}
-
-            Relationships:
-            - TB_TAG_MNG.TAG_SN can be joined with TB_C_RT.TAG_SN
-            - TB_TAG_MNG.TAG_SN can be joined with TB_AI_C_CTR.TAG_SN
-            - TB_TAG_MNG.TAG_SN can be joined with TB_AI_C_INIT.TAG_SN
-            - The columns from TB_AI_C_RT are from ITM columns in TB_TAG_MNG table.
-
-            Guidelines:
-            1. [IMPORTANT] ONLY write queries for tables explicitly listed in the schema_info. Do not query any other tables.
-            2. [IMPORTANT] Start with 'SELECT * FROM TABLE_NAME' format.
-                - If you select from TB_C_RT, TB_AI_C_RT or TB_AI_C_CTR, SELECT * FROM TABLE_NAME considering the time filter(UPD_TI).
-                    - If the question does not specify any time-related information, add a time filter: UPD_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 1 HOUR) to limit results to the last hour only.
-                - If you select from TB_AI_C_ALM, SELECT * FROM TB_AI_C_ALM considering the time filter(ALM_TI).
-            3. If JOIN is needed, only join between tables that are explicitly present in schema_info.
-                - You can get metadata of question from the TB_TAG_MNG table.
-                - You must know that the format of TAG_SN is different.
-                    * TB_TAG_MNG.TAG_SN format: "SNWLCGS.1G-41131-101-TBI-B002.F_CV"
-                    * TB_C_RT.TAG_SN format: "1G-41131-101-TBI-B002"
-                    * TB_AI_C_CTR.TAG_SN format: "1G-41131-101-TBI-B002"
-                    * To join these tables, you must use pattern matching:
-                        SUBSTRING_INDEX(SUBSTRING_INDEX(TB_TAG_MNG.TAG_SN, '.', 2), '.', -1) = TB_C_RT.TAG_SN
-                - You can know the meaning of the ITM in TB_TAG_MNG table from the DP column in TB_TAG_MNG table.
-            4. Use appropriate WHERE conditions based on the question.
-                - (Required) If the question does not specify any time-related information, add a time filter: UPD_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 1 HOUR) to limit results to the last hour only.
-                - (Optional) If the table you select is TB_C_RT or TB_AI_C_CTR, It would be much better to use TAG_SN from TB_TAG_MNG table NOT LIKE '%AOS%'.
-            5. Use appropriate ORDER BY conditions. It would be better to order by time desc.
-            6. Generate only the SQL query in your response, no other explanations.
-            7. If there's not any query result that make sense to answer the question, create a syntactically correct SQL query to answer the user question.
-            8. DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.
-            9. If a query was already executed, but there was an error. Response with the same error message you found.
-            10. Attach ';' at the end of the each query.
-            
-            [IMPORTANT] Your response must be a dictionary that ONLY includes tables present in schema_info.
-            Do not include any tables that are not in schema_info, even if they might seem relevant.
-
-            Return SQL query dictionary(type: dict):
-            {sql_query_format}
-
-            Examples:
-            
-                'TB_TAG_MNG': 'SELECT * FROM TB_TAG_MNG;'
-
-                'TB_C_RT': 'SELECT *
-                            FROM TB_C_RT
-                            WHERE TAG_SN IN (
-                                SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(TB_TAG_MNG.TAG_SN, '.', 2), '.', -1)
-                                FROM TB_TAG_MNG
-                                WHERE AI_CD = 'C' AND DP LIKE '%원수 탁도%' AND TAG_SN NOT LIKE '%AOS%'
-                            )
-                            AND UPD_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 3 HOUR)
-                            ORDER BY UPD_TI DESC
-                            LIMIT 10;'
-
+            ("system", 
             """
+            You are a SQL query generator specialized in water management systems.
+            Your role is to analyze user queries and generate the most relevant SQL queries.
 
-        # return system_message
-        template = ChatPromptTemplate.from_messages([
-            ("system", system_message.format(schema_info="{schema_info}",
-                                             sql_query_format=sql_query_format, 
-                                            #  sql_query_format_example=sql_query_format_example
-                                             )
-                                             ),
-            ("human", "{question}"),
+            User question: {question}
+
+            Selected tables:
+            {tables_formatted}
+
+            You have access to the following tools: {tools}. 
+            The available tools are: {tool_names}.
+            
+            [IMPORTANT] When calling the generate_sql_query tool, you MUST provide BOTH parameters:
+            - question: The user's question as a string
+            - selected_tables: A dictionary of table names and descriptions
+            
+            Example of CORRECT tool call:
+            Action: generate_sql_query
+            Action Input: {{"question": "{question}", "selected_tables": {selected_tables_json}}}
+            
+            [IMPORTANT] Your final response MUST be in the following JSON dictionary format ONLY:
+            ```json
+            TABLE_NAME1: SQL_QUERY1, TABLE_NAME2: SQL_QUERY2
+            ```
+            Do not include any explanation or other text outside of this JSON format.
+            """
+            ),
+            MessagesPlaceholder(variable_name="messages"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
         ])
 
-        return template
 
-    def sql_query_gen_prompt(self, table_schemas: dict):
-        def process_schema_for_prompt(table_name, schema_text):
-            """테이블별로 스키마 정보 처리"""
-            if table_name == "TB_AI_C_RT":
-                # JSON이 많은 테이블은 샘플 데이터 제외
-                return schema_text.split("/*")[0].strip()
-            else:
-                # 다른 테이블은 샘플 데이터 포함
-                return schema_text
+    def react_agent_prompt(self):
+        return PromptTemplate.from_template(
+            """
+            You are a professional data analyst.
+            Your role is to analyze the user's question, generate the most relevant Python code, 
+            execute the code to answer the question and return the answer.
 
-        schema_info = ""
-        for table, schema in table_schemas.items():
-            schema_info += f"\n## {table} Table:\n{process_schema_for_prompt(table, schema)}\n"
+            User question: {question}
 
-        system_message = f"""
-             You are a SQL expert with a strong attention to detail.
+            Available dataframes:
+            {dataframes_info}
 
-             You can define SQL queries, analyze queries results and interpretate query results to response an answer.
+            Available tools:
+            {tools}
 
-             You can use the following table schemas and relationships to generate a SQL query:
-             Schema Info:
-             {schema_info}
+            Tools name: {tool_names}
 
-             Relationships:
-             - TB_TAG_MNG.TAG_SN can be joined with TB_C_RT.TAG_SN
-             - TB_TAG_MNG.TAG_SN can be joined with TB_AI_C_CTR.TAG_SN
-             - The columns from TB_AI_C_RT are from ITM columns in TB_TAG_MNG table.
-
-             Guidelines:
-             1. Write a SELECT query that matches the question.
-                - If you select from TB_C_RT, TB_AI_C_RT or TB_AI_C_CTR, select UPD_TI together.
-             2. Use JOIN when necessary.
-                - You can get metadata of question from the TB_TAG_MNG table.
-                For example, You can use the TAG_SN column from TB_TAG_MNG to join with TB_C_RT or TB_AI_C_CTR tables,
-                as it serves as a foreign key relationship between these tables.
-                - You must know that the format of TAG_SN is different.
-                    * TB_TAG_MNG.TAG_SN format: "SNWLCGS.1G-41131-101-TBI-B002.F_CV"
-                    * TB_C_RT.TAG_SN format: "1G-41131-101-TBI-B002"
-                    * TB_AI_C_CTR.TAG_SN format: "1G-41131-101-TBI-B002"
-                    * To join these tables, you must use pattern matching:
-                        SUBSTRING_INDEX(SUBSTRING_INDEX(TB_TAG_MNG.TAG_SN, '.', 2), '.', -1) = TB_C_RT.TAG_SN
-                - You can know the meaning of the ITM in TB_TAG_MNG table from the DP column in TB_TAG_MNG table.
-                - The columns from TB_AI_C_RT are from ITM columns in TB_TAG_MNG table.
-             3. Use clear WHERE conditions.
-                - (Required) When you search in TB_TAG_MNG table, It would be much better to use AI_CD = 'C' and DP LIKE '%Question%'.
-                - (Optional) If the table you select is TB_C_RT or TB_AI_C_CTR, It would be much better to use TAG_SN from TB_TAG_MNG table NOT LIKE '%AOS%'
-                - (Required) If the question does not specify any time-related information, add a time filter: UPD_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 1 HOUR) to limit results to the last hour only.
-             4. Use clear ORDER BY conditions.
-                - If you select from TB_C_RT, TB_AI_C_RT or TB_AI_C_CTR, order by UPD_TI DESC.
-             5. Do not include comments in the query.
-             6. Provide only the SQL query in your response, no other explanations.
-             7. Use the exact column names as specified.
-             7. If there's not any query result that make sense to answer the question, create a syntactically correct SQL query to answer the user question. DO NOT make any DML statements (INSERT, UPDATE, DELETE, DROP etc.) to the database.
-             8. If a query was already executed, but there was an error. Response with the same error message you found.
-             9. Add LIMIT 10 if there is no time filter.
-
-             Return ONLY the raw SQL query. Do not include ```sql tags, code blocks, or any other markdown formatting.
+            <Data analysis instructions>
+            1. The dataframes can be accessed by 'df_dict[table_name]'.
+            2. If data preprocessing, transformation, or joining is needed, perform it.
+            3. [IMPORTANT] DO NOT create or overwrite the original dataframes.
+            4. [IMPORTANT] If the dataframe has a multiple columns(ex. TB_AI_C_RT),
+                It would be better to use df.loc[:, df.columns.get_level_values(COLUMNS_LEVEL_NAME) == COLUMN_NAME] when you select certain columns. 
+            5. If user asks with columns that are not listed in `df.columns`, you may refer to the most similar columns listed below.
+               Maybe you can find columns from TB_TAG_MNG table.
 
 
-             For Example:
+            <Visualization instructions>
+            1. When creating visualizations, ALWAYS include `plt.show()` at the end of your code.
+            2. I prefer seaborn code for visualizations, but you can use matplotlib as well.
+            3. Use `Korean` for your visualization labels and titles.
+            4. If you generate a visualization, call the save_figure tool to save the image.
+            5. [Very important] The final analysis result must be saved in a dataframe named 'result_df'.
+            
 
-             SELECT UPD_TI, TAG_VAL
-             FROM TB_C_RT
-             WHERE TAG_SN IN (
-                 SELECT SUBSTRING_INDEX(SUBSTRING_INDEX(TB_TAG_MNG.TAG_SN, '.', 2), '.', -1)
-                 FROM TB_TAG_MNG
-                 WHERE AI_CD = 'C' AND DP LIKE '%원수 탁도%' AND TAG_SN NOT LIKE '%AOS%'
-             )
-             AND UPD_TI >= DATE_SUB('2025-03-14 16:46:00', INTERVAL 3 HOUR)
-             ORDER BY UPD_TI DESC
-             LIMIT 10;
+            <Thought process>
+            Think step by step. At each step:
+            - Thought: Think about how to solve the problem. Plan how to analyze and visualize the data.
+            - Action: Specify the tool and input. If you use python_repl_tool, input the entire code.
+            - Observation: Observe the result of the tool execution.
 
-        """
+            Example:
+            Thought:  Extract the relevant data from the `TB_C_RT` dataframe and calculate the average turbidity for each hour on March 11th.
+            Action: Use the `python_repl_tool` to execute the code.
+            Observation: The code will extract the relevant data, calculate the average turbidity for each hour, and plot the results.
+            
+         
+            Save the python code generated in the 'python_code' field.
 
-        template = ChatPromptTemplate.from_messages([
-            ("system", system_message),
-            ("human", "{question}"),
-        ])
+            <Final response>
+            1. Summarize the data analysis result.
+            2. Provide a clear answer to the user's question.
+            3. (Optional) Visualization result with the explanation.
 
-        return template
+            Write the final response in Korean.
+
+            {agent_scratchpad}
+            """
+        )
+
 
     def db_result_prompt(self):
         return ChatPromptTemplate.from_messages([
