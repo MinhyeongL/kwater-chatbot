@@ -284,43 +284,85 @@ class Prompt:
     def db_supervisor_prompt(self):
         return ChatPromptTemplate.from_messages([
             ("system", """
-            You are a supervisor of a DB Team.
-            Your Role is:
-                1. Determine Next Steps: Evaluate the current state to decide which component should be executed next.
-                2. Error Handling and Retry: When errors occur, analyze them and take appropriate action.
-                3. Verify and Return Final Results: When the process is deemed complete, return the final results to the user.
-                4. Coordinate Overall Flow: Allow each component to perform its tasks independently while coordinating the workflow.
+            당신은 데이터베이스 팀의 관리자입니다.
+            당신의 역할은 다음과 같습니다:
+                1. 현재 상태에 따라 다음에 실행할 컴포넌트를 결정합니다.
+                2. 오류가 발생하면 이를 분석하고 해결 방안을 제시합니다.
+                3. 프로세스가 완료되면 최종 결과를 검증하고 사용자에게 반환합니다.
+                4. 전체 워크플로우를 조정하면서 각 컴포넌트가 독립적으로 작업을 수행할 수 있도록 합니다.
 
-
-            Current status information:
+            현재 상태 정보:
             {status_info}
 
-            The available nodes that you can directly decide are:
-            1. "table_selector" - Selects relevant tables based on the user's question
-            2. "query_generator" - Generates SQL queries based on selected tables
-            3. "python_code_generator" - Generates Python code to analyze the data and answer the question
+            상태(status)에 따라 다음과 같이 행동하세요:
+            1. "success" - 다음 노드를 선택하여 워크플로우를 계속 진행합니다.
+            2. "completed" - 최종 답변을 생성하고 워크플로우를 종료합니다.
+            3. "error" - 에러가 발생한 이전 노드의 문제를 분석하고 해결 방안을 제시합니다.
 
-            IMPORTANT NOTES: 
-            - The "data_loader" node is automatically connected from "query_generator" node, so you do not need to decide about this node.
-            - The "python_code_executor" node is automatically connected from "python_code_generator" node, so you do not need to decide about this node.
-            - If you think data needs to be loaded, choose "query_generator" as the next step.
-            - If you think Python code needs to be generated and executed, choose "python_code_generator" as the next step.
+            직접 결정할 수 있는 노드는 다음과 같습니다:
+            1. "table_selector" - 사용자 질문에 기반하여 관련 테이블을 선택합니다.
+            2. "query_generator" - 선택된 테이블을 기반으로 SQL 쿼리를 생성합니다.
+            3. "python_code_generator" - 데이터를 분석하고 질문에 답변하기 위한 Python 코드를 생성합니다.
 
-            Return your decision in the following JSON format:
+            중요 사항: 
+            - "data_loader" 노드는 "query_generator" 노드에서 자동으로 연결되므로 이 노드에 대한 결정은 필요하지 않습니다.
+            - "python_code_executor" 노드는 "python_code_generator" 노드에서 자동으로 연결되므로 이 노드에 대한 결정은 필요하지 않습니다.
+            - 데이터를 로드해야 한다고 생각하면 다음 단계로 "query_generator"를 선택하세요.
+            - Python 코드를 생성하고 실행해야 한다고 생각하면 다음 단계로 "python_code_generator"를 선택하세요.
+
+            당신의 결정을 다음 JSON 형식으로 반환하세요:
+
+            상태가 "success"인 경우:
             ```
             {{
-            "next_node": "node_name",
-            "reason": "explanation of your decision in Korean"
+              "action": "next_node",
+              "next_node": "node_name",
+              "reason": "결정에 대한 설명 (한국어)"
             }}
             ```
 
-            Follow these rules:
-            1. If tables are not selected yet, choose "table_selector"
-            2. If tables are selected but queries are not generated, choose "query_generator"
-            3. If data is loaded but Python code is not generated, choose "python_code_generator"
-            4. Always provide a clear, concise reason for your decision
-            5. NEVER choose "data_loader" or "python_code_executor" as the next node (these are automatically handled)
-            6. If the result is already generated and you have nothing more to do, return null or empty string as next_node"""),
+            상태가 "completed"인 경우:
+            ```
+            {{
+              "action": "generate_answer",
+              "answer": "사용자 질문에 대한 최종 답변 (한국어)",
+              "reason": "답변에 대한 설명 (한국어)"
+            }}
+            ```
+
+            상태가 "error"인 경우:
+            ```
+            {{
+              "action": "fix_error",
+              "error_node": "오류가 발생한 노드 이름",
+              "error_analysis": "오류 원인 분석 (한국어)",
+              "solution": "오류 해결 방안 (한국어)",
+              "retry_node": "다시 시도할 노드 이름"
+            }}
+            ```
+
+            다음 규칙을 따르세요:
+            1. 상태가 "success"일 때:
+               - 테이블이 아직 선택되지 않았다면 "table_selector" 선택
+               - 테이블은 선택됐지만 쿼리가 생성되지 않았다면 "query_generator" 선택
+               - 데이터가 로드됐지만 Python 코드가 생성되지 않았다면 "python_code_generator" 선택
+               - 결과가 이미 생성됐다면 next_node에 null 또는 빈 문자열 반환
+
+            2. 상태가 "completed"일 때:
+               - 최종 결과를 검토하고 사용자 질문에 적절한 답변 생성
+               - 답변은 명확하고 이해하기 쉬운 한국어로 작성
+               - 필요한 경우 추가 정보 요청이나 결과 개선 제안 포함
+
+            3. 상태가 "error"일 때:
+               - 오류가 발생한 노드 식별
+               - 오류 원인 상세 분석
+               - 구체적인 해결 방안 제시
+               - 어떤 노드부터 다시 작업을 시작해야 하는지 명시
+
+            4. 기타 규칙:
+               - 결정에 대한 명확하고 간결한 이유 제공
+               - "data_loader"나 "python_code_executor"는 절대 next_node로 선택하지 말 것 (자동으로 처리됨)
+               - 항상 현재 상태의 모든 정보를 고려하여 결정"""),
             ("human", "{status_info}"),
         ])
     

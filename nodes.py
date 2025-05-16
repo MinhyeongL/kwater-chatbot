@@ -28,7 +28,10 @@ MODEL_NAME = "gpt-4o"  # 또는 다른 모델 이름 사용
 
 def db_supervisor_node(state: DBState) -> Dict[str, Any]:
     """
-    데이터베이스 관리자 노드: 데이터베이스 연결 관리 및 상태를 확인하고 다음 작업을 결정합니다.
+    데이터베이스 관리자 노드
+    1. state의 status가 success이면 다음 노드 선택
+    2. state의 status가 completed이면 최종 답변 생성
+    3. state의 status가 error면 이전 노드에서 에러 해결
     """
     # 데이터베이스 연결 확인
     if not state.db:
@@ -49,92 +52,257 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
             "has_python_code": bool(state.python_code),
             "has_result": bool(state.final_result),
             "status": state.status,
-            "question": state.question if state.question else ""
+            "question": state.question if state.question else "",
+            "last_node": state.last_node if hasattr(state, "last_node") else None,
+            "error_message": state.error.get("message", "") if hasattr(state, "error") and state.error else ""
         }
         
-        # Supervisor chain 실행
-        supervisor_chain = supervisor_prompt | llm_for_supervisor | StrOutputParser()
-        next_action = supervisor_chain.invoke({
+        # Agent 도구 정의 (향후 확장을 위한 준비)
+        """
+        # Agent를 사용할 경우 아래와 같이 도구를 정의하고 사용할 수 있습니다
+        tools = [
+            Tool(
+                name="decide_next_node",
+                func=lambda input_str: {"result": "next_node_decided", "next_node": input_str},
+                description="현재 상태를 분석하여 다음에 실행할 노드를 결정합니다."
+            ),
+            Tool(
+                name="generate_final_answer",
+                func=lambda input_str: {"result": "answer_generated", "answer": input_str},
+                description="최종 결과를 분석하여 사용자 질문에 대한 최종 답변을 생성합니다."
+            ),
+            Tool(
+                name="analyze_error",
+                func=lambda input_str: {"result": "error_analyzed", "analysis": input_str},
+                description="오류의 원인을 분석하고 해결 방안을 제시합니다."
+            )
+        ]
+        
+        # Agent 생성 및 실행
+        agent = create_tool_calling_agent(llm_for_supervisor, tools, supervisor_prompt)
+        agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+        
+        # Agent 실행
+        agent_result = agent_executor.invoke({
             "status_info": json.dumps(status_info, ensure_ascii=False, indent=2)
         })
         
-        # 다음 액션 파싱
-        try:
-            action_data = json_parse(next_action)
-            next_node = action_data.get("next_node")
-            reason = action_data.get("reason", "")
-            
-            # data_loader로의 결정은 무시 (직접 연결되므로)
-            if next_node == "data_loader":
-                if not state.df_dict:
-                    next_node = "query_generator"  # query_generator가 data_loader로 연결됨
-                else:
-                    next_node = "python_code_generator"  # 이미 데이터가 있으면 python_code_generator로
-                    
-            # python_code_executor로의 결정은 무시 (직접 연결되므로)
-            if next_node == "python_code_executor":
-                if not state.python_code:
-                    next_node = "python_code_generator"  # python_code_generator가 python_code_executor로 연결됨
-        except:
-            # 기본 라우팅 로직으로 폴백
-            next_node = None
-            reason = "자동 결정"
-            
-            # 상태에 따라 다음 작업 결정
-            if not state.selected_tables:
-                next_node = "table_selector"
-            elif not state.generated_queries:
-                next_node = "query_generator"
-            # data_loader 결정 생략 - query_generator에서 직접 연결됨
-            elif state.df_dict and not state.python_code and not state.final_result:
-                next_node = "python_code_generator"
-            # python_code_executor 결정 생략 - python_code_generator에서 직접 연결됨
-            else:
-                # 이외의 경우는 종료
-                next_node = None
+        # Agent 결과 처리
+        action_response = agent_result["output"]
+        """
         
-        # 상태 반환 (다음 노드 정보 포함)
-        new_state = sanitize_state_for_serialization(state)
-        new_state["next"] = next_node
-        new_state["status"] = "success"
-        
-        # 완료 여부 확인
-        if state.final_result and not next_node:
-            new_state["completed"] = True
-        
-        # 중간 단계 기록
-        if not new_state.get("intermediate_steps"):
-            new_state["intermediate_steps"] = []
-        
-        new_state["intermediate_steps"].append({
-            "node": "supervisor",
-            "action": "decide_next_node",
-            "result": next_node,
-            "reason": reason
+        # 현재는 체인 방식 사용
+        supervisor_chain = supervisor_prompt | llm_for_supervisor | StrOutputParser()
+        action_response = supervisor_chain.invoke({
+            "status_info": json.dumps(status_info, ensure_ascii=False, indent=2)
         })
         
-        return new_state
+        # 응답 파싱
+        try:
+            action_data = json_parse(action_response)
+            action_type = action_data.get("action")
+            
+            # 상태에 따른 처리
+            if action_type == "next_node":
+                # 다음 노드 선택 (success 상태)
+                next_node = action_data.get("next_node")
+                reason = action_data.get("reason", "")
+                
+                # data_loader 또는 python_code_executor로의 결정은 무시 (직접 연결되므로)
+                if next_node == "data_loader":
+                    if not state.df_dict:
+                        next_node = "query_generator"  # query_generator가 data_loader로 연결됨
+                    else:
+                        next_node = "python_code_generator"  # 이미 데이터가 있으면 python_code_generator로
+                        
+                if next_node == "python_code_executor":
+                    if not state.python_code:
+                        next_node = "python_code_generator"  # python_code_generator가 python_code_executor로 연결됨
+                
+                # 현재 노드를 last_node로 저장 (오류 발생 시 돌아오기 위해)
+                new_state = sanitize_state_for_serialization(state)
+                new_state["next"] = next_node
+                new_state["status"] = "success"
+                new_state["last_node"] = "supervisor"  # 현재 노드 저장
+                
+                # 중간 단계 기록
+                if not new_state.get("intermediate_steps"):
+                    new_state["intermediate_steps"] = []
+                
+                new_state["intermediate_steps"].append({
+                    "node": "supervisor",
+                    "action": "decide_next_node",
+                    "result": next_node,
+                    "reason": reason
+                })
+                
+                return new_state
+                
+            elif action_type == "generate_answer":
+                # 최종 답변 생성 (completed 상태)
+                answer = action_data.get("answer", "")
+                reason = action_data.get("reason", "")
+                
+                # 상태 업데이트
+                new_state = sanitize_state_for_serialization(state)
+                new_state["status"] = "completed"
+                new_state["completed"] = True
+                new_state["final_answer"] = answer  # 최종 답변 저장
+                
+                # 최종 답변 메시지 추가
+                assistant_message = {
+                    "role": "assistant", 
+                    "content": answer
+                }
+                
+                if not new_state.get("messages"):
+                    new_state["messages"] = []
+                
+                new_state["messages"] = state.messages + [assistant_message]
+                
+                # 중간 단계 기록
+                if not new_state.get("intermediate_steps"):
+                    new_state["intermediate_steps"] = []
+                
+                new_state["intermediate_steps"].append({
+                    "node": "supervisor",
+                    "action": "generate_answer",
+                    "result": "final_answer_generated",
+                    "reason": reason
+                })
+                
+                return new_state
+                
+            elif action_type == "fix_error":
+                # 에러 해결 (error 상태)
+                error_node = action_data.get("error_node")
+                error_analysis = action_data.get("error_analysis", "")
+                solution = action_data.get("solution", "")
+                retry_node = action_data.get("retry_node")
+                
+                # 상태 업데이트
+                new_state = sanitize_state_for_serialization(state)
+                new_state["status"] = "retry"  # 재시도 상태로 변경
+                new_state["next"] = retry_node  # 재시도할 노드 설정
+                
+                # 에러 해결 정보 추가
+                new_state["error_resolution"] = {
+                    "error_node": error_node,
+                    "error_analysis": error_analysis,
+                    "solution": solution
+                }
+                
+                # 오류 정보 초기화 (재시도를 위해)
+                if "error" in new_state:
+                    del new_state["error"]
+                
+                # 에러 해결 메시지 추가 (사용자에게 보여줄 정보)
+                assistant_message = {
+                    "role": "assistant", 
+                    "content": f"오류가 발생했습니다: {error_analysis}\n\n해결 방안: {solution}\n\n다시 시도하겠습니다."
+                }
+                
+                if not new_state.get("messages"):
+                    new_state["messages"] = []
+                
+                new_state["messages"] = state.messages + [assistant_message]
+                
+                # 중간 단계 기록
+                if not new_state.get("intermediate_steps"):
+                    new_state["intermediate_steps"] = []
+                
+                new_state["intermediate_steps"].append({
+                    "node": "supervisor",
+                    "action": "fix_error",
+                    "result": f"retry_{retry_node}",
+                    "reason": error_analysis
+                })
+                
+                return new_state
+            
+            else:
+                # 알 수 없는 액션 타입
+                raise ValueError(f"알 수 없는 액션 타입: {action_type}")
+                
+        except Exception as parse_error:
+            # 파싱 오류 처리
+            print(f"Error parsing supervisor response: {str(parse_error)}")
+            print(f"Raw response: {action_response}")
+            
+            # 기본 라우팅 로직으로 폴백
+            next_node = None
+            reason = "자동 결정 (파싱 오류)"
+            
+            # 상태에 따른 기본 라우팅
+            if state.status == "error":
+                # 오류 상태 처리
+                if hasattr(state, "last_node") and state.last_node:
+                    next_node = state.last_node  # 이전 노드로 돌아가기
+                else:
+                    # 오류 발생했지만 이전 노드가 없는 경우 기본 라우팅
+                    if not state.selected_tables:
+                        next_node = "table_selector"
+                    elif not state.generated_queries:
+                        next_node = "query_generator"
+                    elif state.df_dict and not state.python_code:
+                        next_node = "python_code_generator"
+            else:
+                # 일반 상태 처리
+                if not state.selected_tables:
+                    next_node = "table_selector"
+                elif not state.generated_queries:
+                    next_node = "query_generator"
+                elif state.df_dict and not state.python_code and not state.final_result:
+                    next_node = "python_code_generator"
+                elif state.final_result:
+                    # 이미 결과가 있으면 완료 처리
+                    next_node = None
+                    
+            # 상태 업데이트
+            new_state = sanitize_state_for_serialization(state)
+            new_state["next"] = next_node
+            new_state["status"] = "success" if next_node else "completed"
+            new_state["last_node"] = "supervisor"  # 현재 노드 저장
+            
+            # 완료 여부 확인
+            if state.final_result and not next_node:
+                new_state["completed"] = True
+            
+            # 중간 단계 기록
+            if not new_state.get("intermediate_steps"):
+                new_state["intermediate_steps"] = []
+            
+            new_state["intermediate_steps"].append({
+                "node": "supervisor",
+                "action": "decide_next_node",
+                "result": next_node,
+                "reason": reason
+            })
+            
+            return new_state
     
     except Exception as e:
-        # 오류 처리
+        # 일반 오류 처리
         print(f"Error in supervisor_node: {str(e)}")
         traceback.print_exc()
         
         # 기본 라우팅 로직으로 폴백
         next_node = None
+        reason = f"오류 발생: {str(e)}"
+        
+        # 상태 확인 및 기본 라우팅
         if not state.selected_tables:
             next_node = "table_selector"
         elif not state.generated_queries:
             next_node = "query_generator"
-        # data_loader 결정 생략 - query_generator에서 직접 연결됨
         elif state.df_dict and not state.python_code and not state.final_result:
             next_node = "python_code_generator"
-        # python_code_executor 결정 생략 - python_code_generator에서 직접 연결됨
         
         return {
             **sanitize_state_for_serialization(state),
             "next": next_node,
-            "status": "success"
+            "status": "success",
+            "error_info": {"message": str(e)}  # 오류 정보 추가
         }
 
 
@@ -192,6 +360,7 @@ def table_selector_node(state: DBState) -> Dict[str, Any]:
         new_state = sanitize_state_for_serialization(state)
         new_state["selected_tables"] = selected_tables
         new_state["question"] = question  # 현재 질문 저장
+        new_state["last_node"] = "table_selector"  # 현재 노드 저장
         
         # 메시지 추가
         assistant_message = {"role": "assistant", "content": "테이블 선택을 완료했습니다."}
@@ -210,7 +379,8 @@ def table_selector_node(state: DBState) -> Dict[str, Any]:
         return {
             **sanitize_state_for_serialization(state),
             "error": {"message": str(e)},
-            "status": "error"
+            "status": "error",
+            "last_node": "table_selector"  # 오류 발생 노드 저장
         }
     
 
@@ -254,6 +424,7 @@ def query_generator_node(state: DBState) -> Dict[str, Any]:
         # 상태 업데이트
         new_state = sanitize_state_for_serialization(state)
         new_state["generated_queries"] = generated_queries
+        new_state["last_node"] = "query_generator"  # 현재 노드 저장
         
         # 메시지 추가
         assistant_message = {"role": "assistant", "content": "SQL 쿼리를 생성했습니다."}
@@ -269,7 +440,8 @@ def query_generator_node(state: DBState) -> Dict[str, Any]:
         return {
             **sanitize_state_for_serialization(state),
             "error": {"message": str(e)},
-            "status": "error"
+            "status": "error",
+            "last_node": "query_generator"  # 오류 발생 노드 저장
         }
     
 
@@ -298,6 +470,7 @@ def data_loader_node(state: DBState) -> Dict[str, Any]:
         # 상태 업데이트
         new_state = sanitize_state_for_serialization(state)
         new_state["df_dict"] = df_dict
+        new_state["last_node"] = "data_loader"  # 현재 노드 저장
 
         # 메시지 추가
         assistant_message = {"role": "assistant", "content": "데이터 로딩을 완료했습니다."}
@@ -319,7 +492,8 @@ def data_loader_node(state: DBState) -> Dict[str, Any]:
         return {
             **sanitize_state_for_serialization(state),
             "error": {"message": str(e)},
-            "status": "error"
+            "status": "error",
+            "last_node": "data_loader"  # 오류 발생 노드 저장
         }
 
 
@@ -374,6 +548,7 @@ def python_code_generator_node(state: DBState) -> Dict[str, Any]:
         # 상태 업데이트
         new_state = sanitize_state_for_serialization(state)
         new_state["python_code"] = cleaned_code
+        new_state["last_node"] = "python_code_generator"  # 현재 노드 저장
         
         # 피드백 정보 제거 (새로운 코드를 생성했으므로)
         if "code_feedback" in new_state:
@@ -401,7 +576,8 @@ def python_code_generator_node(state: DBState) -> Dict[str, Any]:
         return {
             **sanitize_state_for_serialization(state),
             "error": {"message": str(e)},
-            "status": "error"
+            "status": "error",
+            "last_node": "python_code_generator"  # 오류 발생 노드 저장
         }
 
 
@@ -440,6 +616,7 @@ def python_code_executor_node(state: DBState) -> Dict[str, Any]:
                 **sanitize_state_for_serialization(state),
                 "error": {"message": error_message},
                 "status": "error",
+                "last_node": "python_code_executor",  # 오류 발생 노드 저장
                 "code_feedback": {
                     "issue": "missing_result_df",
                     "message": error_message,
@@ -454,6 +631,7 @@ def python_code_executor_node(state: DBState) -> Dict[str, Any]:
                     **sanitize_state_for_serialization(state),
                     "error": {"message": error_message},
                     "status": "error",
+                    "last_node": "python_code_executor",  # 오류 발생 노드 저장
                     "code_feedback": {
                         "issue": "empty_result_df",
                         "message": error_message,
@@ -494,6 +672,7 @@ def python_code_executor_node(state: DBState) -> Dict[str, Any]:
         new_state["final_result"] = final_result
         new_state["status"] = "completed"  # 실행 완료 상태로 설정
         new_state["completed"] = True      # 전체 프로세스 완료 표시
+        new_state["last_node"] = "python_code_executor"  # 현재 노드 저장
         
         
         # 메시지 추가
@@ -531,7 +710,8 @@ def python_code_executor_node(state: DBState) -> Dict[str, Any]:
         return {
             **sanitize_state_for_serialization(state),
             "error": {"message": f"코드 실행 중 오류 발생: {str(e)}"},
-            "status": "error"
+            "status": "error",
+            "last_node": "python_code_executor"  # 오류 발생 노드 저장
         }
 
 
