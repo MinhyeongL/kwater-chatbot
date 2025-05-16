@@ -83,11 +83,12 @@ class Prompt:
 
             ===== CRITICAL RULES =====
             1. YOU MUST ONLY GENERATE SQL THAT SELECTS FROM THE {table_name} TABLE
-            2. YOUR QUERY MUST START WITH "SELECT ... FROM {table_name}"
+            2. YOUR QUERY MUST START WITH "SELECT * FROM {table_name}"
             3. ANY OTHER TABLE CAN ONLY BE REFERENCED IN SUBQUERIES
             4. NEVER SELECT FROM A DIFFERENT TABLE AS THE MAIN TABLE
             5. TRIPLE CHECK YOUR QUERY BEFORE RETURNING
             6. RETURN ONLY THE RAW SQL QUERY - NO MARKDOWN, NO BACKTICKS, NO EXPLANATIONS
+            7. DATA PROCESS WILL BE EXECUTED IN OTHER NODE. YOU JUST FOLLOW THE RULES SIMPLELY.
 
             Relationships:
             - TB_TAG_MNG.TAG_SN can be joined with TB_X_RT.TAG_SN
@@ -157,8 +158,6 @@ class Prompt:
             ORDER BY UPD_TI DESC
             LIMIT 10;
 
-
-
             """
             ),
             ("human", "{question}"),
@@ -171,6 +170,7 @@ class Prompt:
             """
             You are a SQL query generator specialized in water management systems.
             Your role is to analyze user queries and generate the most relevant SQL queries.
+            You must generate SQL queries using the following tools.
 
             User question: {question}
 
@@ -235,19 +235,39 @@ class Prompt:
             5. [Very important] The final analysis result must be saved in a dataframe named 'result_df'.
             
 
-            <Thought process>
-            Think step by step. At each step:
-            - Thought: Think about how to solve the problem. Plan how to analyze and visualize the data.
-            - Action: Specify the tool and input. If you use python_repl_tool, input the entire code.
-            - Observation: Observe the result of the tool execution.
-
-            Example:
-            Thought:  Extract the relevant data from the `TB_C_RT` dataframe and calculate the average turbidity for each hour on March 11th.
-            Action: Use the `python_repl_tool` to execute the code.
-            Observation: The code will extract the relevant data, calculate the average turbidity for each hour, and plot the results.
+            <Tool calling FORMAT REQUIREMENTS - CRITICAL>
+            When calling a tool, you MUST use the EXACT following format:
             
-         
-            Save the python code generated in the 'python_code' field.
+            Thought: I need to [reasoning about the next step]
+            Action: python_repl_tool
+            Action Input: [full Python code here]
+            
+            The format must strictly be in English, and there MUST be a newline between "Action:" and "Action Input:".
+            DO NOT write text between "Action:" and "Action Input:", such as "Action: python_repl_tool를 사용하여 코드를 실행합니다."
+            
+            INCORRECT (DO NOT DO THIS):
+            Action: python_repl_tool을 사용하여 코드를 실행합니다.
+            Action Input: [code]
+            
+            CORRECT (DO THIS):
+            Action: python_repl_tool
+            Action Input: [code]
+            
+            For example:
+            
+            Thought: I need to extract the March 11th data and calculate the average turbidity by hour.
+            Action: python_repl_tool
+            Action Input: 
+            ```python
+            import pandas as pd
+            import matplotlib.pyplot as plt
+            import seaborn as sns
+            
+            # Process data
+            df = df_dict['TB_C_RT']
+            result_df = df.groupby('hour')['turbidity'].mean()
+            print(result_df)
+            ```
 
             <Final response>
             1. Summarize the data analysis result.
@@ -261,12 +281,116 @@ class Prompt:
         )
 
 
+    def db_supervisor_prompt(self):
+        return ChatPromptTemplate.from_messages([
+            ("system", """
+            You are a supervisor of a DB Team.
+            Your Role is:
+                1. Determine Next Steps: Evaluate the current state to decide which component should be executed next.
+                2. Error Handling and Retry: When errors occur, analyze them and take appropriate action.
+                3. Verify and Return Final Results: When the process is deemed complete, return the final results to the user.
+                4. Coordinate Overall Flow: Allow each component to perform its tasks independently while coordinating the workflow.
+
+
+            Current status information:
+            {status_info}
+
+            The available nodes that you can directly decide are:
+            1. "table_selector" - Selects relevant tables based on the user's question
+            2. "query_generator" - Generates SQL queries based on selected tables
+            3. "python_code_generator" - Generates Python code to analyze the data and answer the question
+
+            IMPORTANT NOTES: 
+            - The "data_loader" node is automatically connected from "query_generator" node, so you do not need to decide about this node.
+            - The "python_code_executor" node is automatically connected from "python_code_generator" node, so you do not need to decide about this node.
+            - If you think data needs to be loaded, choose "query_generator" as the next step.
+            - If you think Python code needs to be generated and executed, choose "python_code_generator" as the next step.
+
+            Return your decision in the following JSON format:
+            ```
+            {{
+            "next_node": "node_name",
+            "reason": "explanation of your decision in Korean"
+            }}
+            ```
+
+            Follow these rules:
+            1. If tables are not selected yet, choose "table_selector"
+            2. If tables are selected but queries are not generated, choose "query_generator"
+            3. If data is loaded but Python code is not generated, choose "python_code_generator"
+            4. Always provide a clear, concise reason for your decision
+            5. NEVER choose "data_loader" or "python_code_executor" as the next node (these are automatically handled)
+            6. If the result is already generated and you have nothing more to do, return null or empty string as next_node"""),
+            ("human", "{status_info}"),
+        ])
+    
+
     def db_result_prompt(self):
         return ChatPromptTemplate.from_messages([
             ("system",
              """
              
              """),
+        ])
+
+    def python_code_generator_prompt(self):
+        return ChatPromptTemplate.from_messages([
+            ("system", """
+            당신은 데이터 분석 전문가입니다. 사용자의 질문에 답하기 위한 파이썬 코드를 생성해주세요.
+            
+            주어진 데이터프레임 정보:
+            {dataframes_info}
+            
+            사용자 질문: {question}
+            
+            {code_feedback}
+            
+            다음 규칙을 반드시 따라주세요:
+            1. 코드만 생성하세요 - 실행하지 않습니다
+            2. 필요한 모든 라이브러리(pandas, numpy, matplotlib, seaborn 등)를 import 하세요
+            3. 사용자 질문의 내용에 따라 판단하세요:
+               - 추세, 패턴, 분포, 비교, 시각화 등을 요청하는 경우에만 그래프를 생성하세요
+               - 단순 통계 값이나 계산만 필요한 경우 그래프를 생성하지 마세요
+            4. 그래프를 생성할 때는:
+               - 한글 폰트 문제가 없도록 설정하세요
+               - 그래프 제목과 축 레이블은 한글로 작성하세요
+               - plt.show()를 반드시 포함하세요
+            5. 모든 코드가 에러 없이 실행될 수 있도록 작성하세요
+            6. df_dict 변수를 통해 데이터프레임에 접근할 수 있습니다
+               예: df = df_dict['TB_C_RT']
+            7. 분석 결과는 반드시 result_df 변수에 저장하세요 (중요)
+            8. 코드의 각 부분에 간단한 주석을 달아주세요
+            9. 사용자의 질문에 정확히 답변할 수 있는 분석을 수행하세요
+            10. 결과 데이터프레임(result_df)가 비어있지 않도록 주의하세요
+            
+            다음과 같은 형식으로 코드를 작성하세요:
+            ```python
+            # 라이브러리 임포트
+            import pandas as pd
+            import numpy as np
+            # 시각화가 필요한 경우에만 아래 라이브러리 import
+            # import matplotlib.pyplot as plt
+            # import seaborn as sns
+            
+            # 데이터 접근 및 전처리
+            df = df_dict['테이블명']
+            
+            # 데이터 분석
+            ...
+            
+            # 시각화 (질문에서 시각화가 필요한 경우에만)
+            # plt.figure(figsize=(10, 6))
+            # ...
+            # plt.title('분석 결과 (한글)')
+            # plt.show()
+            
+            # 최종 결과 저장 (필수)
+            result_df = ...
+            ```
+            
+            코드만 반환하세요. 추가 설명이나 주석은 필요하지 않습니다.
+            """),
+            ("human", "{question}"),
         ])
 
     def sql_query_check_prompt():

@@ -184,3 +184,91 @@ def convert_df(table_name: str, df: pd.DataFrame):
         df = df.map(convert_value)
 
     return df
+
+@tool
+def decide_next_node(status_info: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    현재 상태를 분석하고 다음에 실행해야 할 노드를 결정합니다.
+    
+    Args:
+        status_info: 시스템의 현재 상태 정보가 담긴 딕셔너리
+            (has_tables, has_queries, has_data, has_python_code, has_result, status, question 등의 키를 포함)
+            
+    Returns:
+        next_node와 reason 키를 포함하는 딕셔너리
+    """
+    # 현재 상태 확인
+    has_tables = status_info.get("has_tables", False)
+    has_queries = status_info.get("has_queries", False)
+    has_data = status_info.get("has_data", False)
+    has_python_code = status_info.get("has_python_code", False)
+    has_result = status_info.get("has_result", False)
+    status = status_info.get("status", "")
+    
+    # 오류 상태 확인
+    if status == "error":
+        error_message = status_info.get("error", {}).get("message", "")
+        if "데이터베이스 연결" in error_message:
+            return {
+                "next_node": None,
+                "reason": "데이터베이스 연결 오류가 발생했습니다. 진행할 수 없습니다."
+            }
+    
+    # 완료 여부 확인
+    if has_result and status != "error":
+        return {
+            "next_node": None,
+            "reason": "데이터 분석이 완료되었습니다. 더 이상 진행할 단계가 없습니다."
+        }
+    
+    # 상태에 따른 다음 노드 결정
+    if not has_tables:
+        return {
+            "next_node": "table_selector",
+            "reason": "데이터 분석을 위해 먼저 관련 테이블을 선택해야 합니다."
+        }
+    elif not has_queries:
+        return {
+            "next_node": "query_generator",
+            "reason": "선택된 테이블에서 데이터를 가져오기 위한 SQL 쿼리를 생성해야 합니다."
+        }
+    elif has_data and not has_python_code and not has_result:
+        return {
+            "next_node": "python_code_generator",
+            "reason": "데이터가 로드되었습니다. 이제 분석을 위한 Python 코드를 생성해야 합니다."
+        }
+    else:
+        # 기본값
+        return {
+            "next_node": None,
+            "reason": "현재 상태에서 수행할 다음 작업을 결정할 수 없습니다."
+        }
+
+@tool
+def generate_summary(status_info: Dict[str, Any]) -> str:
+    """
+    분석 결과를 요약하여 사용자에게 제공할 메시지를 생성합니다.
+    
+    Args:
+        status_info: 시스템의 현재 상태 정보가 담긴 딕셔너리
+            (final_result, status, question 등의 키를 포함)
+            
+    Returns:
+        사용자에게 표시할 최종 요약 메시지
+    """
+    # 최종 결과 확인
+    final_result = status_info.get("final_result", "")
+    status = status_info.get("status", "")
+    question = status_info.get("question", "")
+    
+    # 오류 상태 확인
+    if status == "error":
+        error_message = status_info.get("error", {}).get("message", "")
+        return f"죄송합니다. 분석 중 오류가 발생했습니다: {error_message}"
+    
+    # 결과가 있는 경우
+    if final_result:
+        return f"질문 '{question}'에 대한 분석 결과입니다:\n\n{final_result}"
+    
+    # 결과가 없는 경우
+    return "아직 분석이 완료되지 않았습니다."

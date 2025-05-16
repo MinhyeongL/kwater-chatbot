@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Dict, Any
 import pandas as pd
 from datetime import datetime
 import json
@@ -299,11 +299,28 @@ def extract_intermediate_steps(result):
                 
     return new_intermediate_steps
 
-def extract_python_code(intermediate_steps):
-    """중간 단계 로그에서 파이썬 코드를 추출합니다."""
+def extract_python_code(input_data):
+    """
+    파이썬 코드를 추출합니다.
+    input_data는 문자열이거나 에이전트의 intermediate_steps일 수 있습니다.
+    """
+    # 문자열 입력인 경우 (생성된 코드에서 직접 추출)
+    if isinstance(input_data, str):
+        # 코드 블록 추출 (```python ... ``` 패턴)
+        code_blocks = re.findall(r'```(?:python)?\s*(.*?)\s*```', input_data, re.DOTALL)
+        if code_blocks:
+            return '\n\n'.join(code_blocks)
+            
+        # 백틱 없이 전체가 코드인 경우
+        if input_data.strip().startswith('import ') or input_data.strip().startswith('# '):
+            return input_data.strip()
+            
+        # 기타 경우: 그냥 입력을 반환
+        return input_data
     
+    # intermediate_steps 리스트인 경우 (ReAct 에이전트의 중간 단계에서 추출)
     python_code = ""
-    for step in intermediate_steps:
+    for step in input_data:
         if "python_repl_tool" in str(step["action"]):
             # 디버깅 출력 추가
             print(f"Debug - Action found: {step['action']}")
@@ -476,3 +493,16 @@ def handle_executor_error(state, e):
         "error": {"message": str(e)},
         "intermediate_steps": [],
     }
+
+def sanitize_safe_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, str]]:
+    """중간 단계 기록을 안전하게 직렬화 가능한 형태로 변환합니다."""
+    safe_steps = []
+    
+    for step in steps:
+        safe_step = {
+            "action": str(step.get("action", "")),
+            "observation": str(step.get("observation", ""))
+        }
+        safe_steps.append(safe_step)
+        
+    return safe_steps
