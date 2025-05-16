@@ -405,6 +405,22 @@ class Prompt:
             9. 사용자의 질문에 정확히 답변할 수 있는 분석을 수행하세요
             10. 결과 데이터프레임(result_df)가 비어있지 않도록 주의하세요
             
+        데이터 처리 시 중요한 정보:
+        - TAG_SN 컬럼의 형식이 테이블마다 다릅니다:
+          * TB_TAG_MNG.TAG_SN 형식: "SNWLCGS.1G-41131-101-TBI-B002.F_CV"
+          * TB_X_RT.TAG_SN 형식: "1G-41131-101-TBI-B002" 
+          * TB_AI_X_CTR.TAG_SN 형식: "1G-41131-101-TBI-B002"
+        - 테이블 간 조인 시 다음과 같은 Python 코드를 사용할 수 있습니다:
+          * TB_TAG_MNG 데이터프레임에서 TAG_SN을 처리하는 예:
+            ```
+            # TAG_SN에서 두 번째 부분을 추출 (1G-41131-101-TBI-B002)
+            df_tag_mng['tag_id'] = df_tag_mng['TAG_SN'].apply(lambda x: x.split('.')[1] if len(x.split('.')) > 1 else x)
+            
+            # 그 후 이 tag_id를 사용하여 다른 테이블과 병합
+            merged_df = pd.merge(df_tag_mng, df_dict['TB_C_RT'], left_on='tag_id', right_on='TAG_SN', how='inner')
+            ```
+        - 주의: 테이블 간 매칭이 항상 일관되게 동작하지 않을 수 있으므로, 병합 결과를 항상 확인하세요.
+            
             다음과 같은 형식으로 코드를 작성하세요:
             ```python
             # 라이브러리 임포트
