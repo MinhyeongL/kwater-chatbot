@@ -14,14 +14,19 @@ class DBState(BaseModel):
     generated_queries: Dict[str, str] = Field(default_factory=dict)
     df_dict: Dict[str, Any] = Field(default_factory=dict)
     python_code: Optional[str] = None
-    final_result: Optional[str] = None
+    final_answer: Optional[str] = None
     result_df: Optional[Any] = None
+    
+    # 시각화 관련 필드
+    has_visualization: Optional[bool] = False
+    result_image: Optional[str] = None
     
     # 상태 관리
     status: str = "running"
     error: Optional[Dict[str, Any]] = None
     next: Optional[str] = None
     completed: Optional[bool] = False
+    last_node: Optional[str] = None
     
     # 코드 피드백 정보
     code_feedback: Optional[Dict[str, str]] = None
