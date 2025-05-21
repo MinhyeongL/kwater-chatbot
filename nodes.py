@@ -639,46 +639,46 @@ def python_code_executor_node(state: DBState) -> Dict[str, Any]:
                     }
                 }
                 
-            result_str = f"분석 결과: {result_df.shape[0]}행 x {result_df.shape[1]}열 데이터프레임 생성\n"
-            # 결과 미리보기 (최대 5행)
-            if result_df.shape[0] > 0:
-                result_str += str(result_df.head().to_string())
-            else:
-                result_str += "결과 데이터프레임이 비어있습니다."
-        else:
-            # 실행 결과를 사용
-            result_str = f"분석은 완료되었으나 result_df 변수를 찾을 수 없습니다.\n실행 결과:\n{result_df}"
-            
-        # 이미지 결과 처리
-        image_references = ""
-        import matplotlib.pyplot as plt  # 이미지 확인용
-        if plt.get_fignums():  # 열린 figure가 있는지 확인
-            try:
-                # 그래프 저장 (임시 파일)
-                image_path = f"analysis_result_{uuid4()}.png"
-                plt.savefig(image_path)
-                plt.close('all')  # 모든 figure 닫기
-                image_references = f"\n\n이미지가 {image_path}에 저장되었습니다."
-                print(f"Debug - Image saved at: {image_path}")
-            except Exception as img_error:
-                print(f"Warning: Could not save image - {str(img_error)}")
+        # 이미지 처리 여부 확인하고 이미지 데이터 캡처
+        import matplotlib.pyplot as plt
+        import io
+        import base64
         
-        # 최종 결과 텍스트
-        final_result = result_str + image_references
+        has_visualization = False
+        result_image = None
+        
+        if plt.get_fignums():  # 열린 figure가 있는지 확인
+            has_visualization = True
+            
+            try:
+                # 현재 figure를 바이트로 저장
+                buf = io.BytesIO()
+                plt.savefig(buf, format='png', bbox_inches='tight')
+                buf.seek(0)
+                
+                # 바이트 데이터를 base64로 인코딩
+                result_image = base64.b64encode(buf.read()).decode('utf-8')
+                print(f"Debug - Visualization data captured successfully")
+            except Exception as img_error:
+                print(f"Warning - Failed to capture visualization data: {str(img_error)}")
+            finally:
+                # 메모리 관리를 위해 모든 figure 닫기
+                plt.close('all')
         
         # 상태 업데이트
         new_state = sanitize_state_for_serialization(state)
         new_state["result_df"] = result_df
-        new_state["final_result"] = final_result
+        new_state["has_visualization"] = has_visualization
+        if has_visualization:
+            new_state["result_image"] = result_image
         new_state["status"] = "completed"  # 실행 완료 상태로 설정
         new_state["completed"] = True      # 전체 프로세스 완료 표시
         new_state["last_node"] = "python_code_executor"  # 현재 노드 저장
         
-        
         # 메시지 추가
         assistant_message = {
             "role": "assistant", 
-            "content": final_result  # 최종 결과를 메시지 내용으로 사용
+            "content": "코드 실행이 완료되었습니다."  # 단순 실행 완료 메시지만 추가
         }
         tool_message = {
             "role": "tool", 
