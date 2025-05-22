@@ -295,7 +295,7 @@ class Prompt:
             {status_info}
 
             상태(status)에 따라 다음과 같이 행동하세요:
-            1. "success" - 다음 노드를 선택하여 워크플로우를 계속 진행합니다.
+            1. "running" - 다음 노드를 선택하여 워크플로우를 계속 진행합니다.
             2. "completed" - 최종 답변을 생성하고 워크플로우를 종료합니다.
             3. "error" - 에러가 발생한 이전 노드의 문제를 분석하고 해결 방안을 제시합니다.
 
@@ -312,7 +312,7 @@ class Prompt:
 
             당신의 결정을 다음 JSON 형식으로 반환하세요:
 
-            상태가 "success"인 경우:
+            상태가 "running"인 경우:
             ```
             {{
               "action": "next_node",
@@ -342,7 +342,7 @@ class Prompt:
             ```
 
             다음 규칙을 따르세요:
-            1. 상태가 "success"일 때:
+            1. 상태가 "running"일 때:
                - 테이블이 아직 선택되지 않았다면 "table_selector" 선택
                - 테이블은 선택됐지만 쿼리가 생성되지 않았다면 "query_generator" 선택
                - 데이터가 로드됐지만 Python 코드가 생성되지 않았다면 "python_code_generator" 선택

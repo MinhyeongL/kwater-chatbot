@@ -170,7 +170,7 @@ def run_reaction_agent(question: str, df_dict: Dict[str, pd.DataFrame], llm: Any
         
         # 15. 성공 결과 반환
         return {
-            "success": True,
+            "running": True,
             "result": sanitized_result,
             "raw_df_dict": updated_df_dict,  # 원본 데이터프레임 딕셔너리
             "raw_result_df": updated_df_dict.get("result_df")  # 결과 데이터프레임
@@ -189,7 +189,7 @@ def run_reaction_agent(question: str, df_dict: Dict[str, pd.DataFrame], llm: Any
             
         # 오류 결과 반환
         return {
-            "success": False,
+            "running": False,
             "error": {
                 "message": str(e),
                 "traceback": traceback.format_exc()
@@ -218,7 +218,7 @@ def update_state_with_reaction_results(state: Any, reaction_results: Dict[str, A
     """
     try:
         # 성공 여부 확인
-        if not reaction_results.get("success", False):
+        if not reaction_results.get("running", False):
             # 오류 발생 시 오류 상태 반환
             error_message = reaction_results.get("error", {}).get("message", "Unknown error")
             

@@ -29,7 +29,7 @@ MODEL_NAME = "gpt-4o"  # 또는 다른 모델 이름 사용
 def db_supervisor_node(state: DBState) -> Dict[str, Any]:
     """
     데이터베이스 관리자 노드
-    1. state의 status가 success이면 다음 노드 선택
+    1. state의 status가 running이면 다음 노드 선택
     2. state의 status가 completed이면 최종 답변 생성
     3. state의 status가 error면 이전 노드에서 에러 해결
     """
@@ -122,7 +122,7 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
                 # 현재 노드를 last_node로 저장 (오류 발생 시 돌아오기 위해)
                 new_state = sanitize_state_for_serialization(state)
                 new_state["next"] = next_node
-                new_state["status"] = "success"
+                new_state["status"] = "running"
                 new_state["last_node"] = "supervisor"  # 현재 노드 저장
                 
                 # 중간 단계 기록
@@ -261,7 +261,7 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
             # 상태 업데이트
             new_state = sanitize_state_for_serialization(state)
             new_state["next"] = next_node
-            new_state["status"] = "success" if next_node else "completed"
+            new_state["status"] = "running" if next_node else "completed"
             new_state["last_node"] = "supervisor"  # 현재 노드 저장
             
             # 완료 여부 확인
@@ -301,7 +301,7 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
         return {
             **sanitize_state_for_serialization(state),
             "next": next_node,
-            "status": "success",
+            "status": "running",
             "error_info": {"message": str(e)}  # 오류 정보 추가
         }
 
@@ -734,7 +734,7 @@ def python_executor_node(state: DBState) -> Dict[str, Any]:
         updated_state = update_state_with_reaction_results(state, reaction_results)
         
         # 원본 DataFrame들 추가 (직렬화 제외)
-        if reaction_results.get("success", False):
+        if reaction_results.get("running", False):
             updated_state["df_dict"] = reaction_results.get("raw_df_dict", {})
             updated_state["result_df"] = reaction_results.get("raw_result_df")
             
