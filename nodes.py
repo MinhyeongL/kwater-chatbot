@@ -42,15 +42,14 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
         llm_for_supervisor = ChatOpenAI(model=MODEL_NAME, temperature=0)
         
         # Supervisor 프롬프트 생성
-        supervisor_prompt = Prompt().db_supervisor_prompt()
-
+        # supervisor_prompt = Prompt().db_supervisor_prompt()
+        supervisor_agent_prompt = Prompt().db_supervisor_agent_prompt()
         # 현재 상태 정보 수집
         status_info = {
             "has_tables": bool(state.selected_tables),
             "has_queries": bool(state.generated_queries),
             "has_data": bool(state.df_dict),
             "has_python_code": bool(state.python_code),
-            "has_result": bool(state.final_result),
             "status": state.status,
             "question": state.question if state.question else "",
             "last_node": state.last_node if hasattr(state, "last_node") else None,
@@ -58,28 +57,10 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
         }
         
         # Agent 도구 정의 (향후 확장을 위한 준비)
-        """
-        # Agent를 사용할 경우 아래와 같이 도구를 정의하고 사용할 수 있습니다
-        tools = [
-            Tool(
-                name="decide_next_node",
-                func=lambda input_str: {"result": "next_node_decided", "next_node": input_str},
-                description="현재 상태를 분석하여 다음에 실행할 노드를 결정합니다."
-            ),
-            Tool(
-                name="generate_final_answer",
-                func=lambda input_str: {"result": "answer_generated", "answer": input_str},
-                description="최종 결과를 분석하여 사용자 질문에 대한 최종 답변을 생성합니다."
-            ),
-            Tool(
-                name="analyze_error",
-                func=lambda input_str: {"result": "error_analyzed", "analysis": input_str},
-                description="오류의 원인을 분석하고 해결 방안을 제시합니다."
-            )
-        ]
+        tools = [decide_next_node, generate_final_answer]
         
         # Agent 생성 및 실행
-        agent = create_tool_calling_agent(llm_for_supervisor, tools, supervisor_prompt)
+        agent = create_tool_calling_agent(llm_for_supervisor, tools, supervisor_agent_prompt)
         agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
         
         # Agent 실행
@@ -89,13 +70,12 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
         
         # Agent 결과 처리
         action_response = agent_result["output"]
-        """
         
         # 현재는 체인 방식 사용
-        supervisor_chain = supervisor_prompt | llm_for_supervisor | StrOutputParser()
-        action_response = supervisor_chain.invoke({
-            "status_info": json.dumps(status_info, ensure_ascii=False, indent=2)
-        })
+        # supervisor_chain = supervisor_prompt | llm_for_supervisor | StrOutputParser()
+        # action_response = supervisor_chain.invoke({
+        #     "status_info": json.dumps(status_info, ensure_ascii=False, indent=2)
+        # })
         
         # 응답 파싱
         try:
@@ -104,7 +84,7 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
             
             # 상태에 따른 처리
             if action_type == "next_node":
-                # 다음 노드 선택 (success 상태)
+                # 다음 노드 선택 (running 상태)
                 next_node = action_data.get("next_node")
                 reason = action_data.get("reason", "")
                 
@@ -252,11 +232,8 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
                     next_node = "table_selector"
                 elif not state.generated_queries:
                     next_node = "query_generator"
-                elif state.df_dict and not state.python_code and not state.final_result:
+                elif state.df_dict and not state.python_code:
                     next_node = "python_code_generator"
-                elif state.final_result:
-                    # 이미 결과가 있으면 완료 처리
-                    next_node = None
                     
             # 상태 업데이트
             new_state = sanitize_state_for_serialization(state)
@@ -265,7 +242,7 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
             new_state["last_node"] = "supervisor"  # 현재 노드 저장
             
             # 완료 여부 확인
-            if state.final_result and not next_node:
+            if state.final_answer and not next_node:
                 new_state["completed"] = True
             
             # 중간 단계 기록
@@ -295,7 +272,7 @@ def db_supervisor_node(state: DBState) -> Dict[str, Any]:
             next_node = "table_selector"
         elif not state.generated_queries:
             next_node = "query_generator"
-        elif state.df_dict and not state.python_code and not state.final_result:
+        elif state.df_dict and not state.python_code:
             next_node = "python_code_generator"
         
         return {

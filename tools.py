@@ -195,11 +195,12 @@ def decide_next_node(status_info: Dict[str, Any]) -> Dict[str, Any]:
             (has_tables, has_queries, has_data, has_python_code, has_visualization, status, question 등의 키를 포함)
             
     Returns:
-        next_node와 reason 키를 포함하는 딕셔너리
+        action, next_node, reason 키를 포함하는 딕셔너리 (JSON 형식)
     """
     if not status_info:
         # 상태 정보가 없는 경우 기본값 사용
         return {
+            "action": "next_node",
             "next_node": "table_selector",
             "reason": "워크플로우를 시작하기 위해 테이블 선택부터 진행합니다."
         }
@@ -219,73 +220,99 @@ def decide_next_node(status_info: Dict[str, Any]) -> Dict[str, Any]:
         # 오류가 발생한 노드에 따라 다음 단계 결정
         if last_node == "table_selector":
             return {
-                "next_node": "table_selector",
-                "reason": f"테이블 선택 중 오류가 발생했습니다: {error_message}. 테이블 선택부터 다시 시도합니다."
+                "action": "fix_error",
+                "error_node": "table_selector",
+                "error_analysis": f"테이블 선택 중 오류가 발생했습니다: {error_message}",
+                "solution": "사용자 질문과 관련된 테이블을 다시 선택합니다.",
+                "retry_node": "table_selector"
             }
         elif last_node == "query_generator":
             return {
-                "next_node": "query_generator",
-                "reason": f"쿼리 생성 중 오류가 발생했습니다: {error_message}. 쿼리 생성부터 다시 시도합니다."
+                "action": "fix_error",
+                "error_node": "query_generator",
+                "error_analysis": f"쿼리 생성 중 오류가 발생했습니다: {error_message}",
+                "solution": "테이블 스키마를 확인하고 SQL 쿼리를 다시 생성합니다.",
+                "retry_node": "query_generator"
             }
         elif last_node == "python_code_generator":
             return {
-                "next_node": "python_code_generator",
-                "reason": f"Python 코드 생성 중 오류가 발생했습니다: {error_message}. 코드 생성부터 다시 시도합니다."
+                "action": "fix_error",
+                "error_node": "python_code_generator",
+                "error_analysis": f"Python 코드 생성 중 오류가 발생했습니다: {error_message}",
+                "solution": "데이터 분석을 위한 Python 코드를 다시 생성합니다.",
+                "retry_node": "python_code_generator"
             }
         elif last_node == "python_code_executor":
             # Python 코드 실행 오류의 일반적인 패턴 확인
             if "result_df" in error_message:
                 return {
-                    "next_node": "python_code_generator",
-                    "reason": "Python 코드가 result_df 변수를 생성하지 않았습니다. 코드를 다시 생성합니다."
+                    "action": "fix_error",
+                    "error_node": "python_code_executor",
+                    "error_analysis": "Python 코드가 result_df 변수를 생성하지 않았습니다.",
+                    "solution": "코드 마지막에 반드시 'result_df = ...' 형태로 결과를 저장하도록 코드를 수정합니다.",
+                    "retry_node": "python_code_generator"
                 }
             elif "empty" in error_message.lower() or "비어" in error_message:
                 return {
-                    "next_node": "python_code_generator",
-                    "reason": "생성된 결과 데이터프레임이 비어있습니다. 코드를 다시 생성합니다."
+                    "action": "fix_error",
+                    "error_node": "python_code_executor",
+                    "error_analysis": "생성된 결과 데이터프레임이 비어있습니다.",
+                    "solution": "데이터 필터링 조건을 확인하고, 결과가 비어있지 않도록 코드를 수정합니다.",
+                    "retry_node": "python_code_generator"
                 }
             else:
                 return {
-                    "next_node": "python_code_generator",
-                    "reason": f"Python 코드 실행 중 오류가 발생했습니다: {error_message}. 코드를 다시 생성합니다."
+                    "action": "fix_error",
+                    "error_node": "python_code_executor",
+                    "error_analysis": f"Python 코드 실행 중 오류가 발생했습니다: {error_message}",
+                    "solution": "코드의 오류를 수정하고 다시 실행합니다.",
+                    "retry_node": "python_code_generator"
                 }
         else:
             # 기본 오류 처리 - 처음부터 다시 시작
             return {
-                "next_node": "table_selector",
-                "reason": f"알 수 없는 오류가 발생했습니다: {error_message}. 처음부터 다시 시도합니다."
+                "action": "fix_error",
+                "error_node": last_node if last_node else "unknown",
+                "error_analysis": f"알 수 없는 오류가 발생했습니다: {error_message}",
+                "solution": "처음부터 다시 시도합니다.",
+                "retry_node": "table_selector"
             }
     
     # 정상 상태 처리 - 워크플로우 진행
     if not has_tables:
         return {
+            "action": "next_node",
             "next_node": "table_selector",
             "reason": "테이블이 선택되지 않았습니다. 테이블 선택부터 진행합니다."
         }
     elif not has_queries:
         return {
+            "action": "next_node",
             "next_node": "query_generator",
             "reason": "테이블은 선택되었지만 쿼리가 없습니다. 쿼리 생성을 진행합니다."
         }
     elif has_data and not has_python_code:
         return {
+            "action": "next_node",
             "next_node": "python_code_generator",
             "reason": "데이터는 로드되었지만 분석 코드가 없습니다. Python 코드 생성을 진행합니다."
         }
     elif has_data and has_python_code:
         return {
+            "action": "next_node",
             "next_node": None,
             "reason": "모든 단계가 완료되었습니다. 워크플로우를 종료합니다."
         }
     
     # 기본값 (처리할 수 없는 상태)
     return {
+        "action": "next_node",
         "next_node": None,
         "reason": "현재 상태에서 수행할 다음 작업을 결정할 수 없습니다."
     }
 
 @tool
-def generate_final_answer(status_info: Dict[str, Any]) -> str:
+def generate_final_answer(status_info: Dict[str, Any]) -> Dict[str, Any]:
     """
     분석 결과를 기반으로 사용자에게 제공할 최종 답변을 생성합니다.
     
@@ -294,11 +321,14 @@ def generate_final_answer(status_info: Dict[str, Any]) -> str:
             (result_df, has_visualization, visualization_data, status, question, python_code 등의 키를 포함)
             
     Returns:
-        사용자에게 표시할 최종 답변 메시지
+        action과 final_answer 키를 포함하는 딕셔너리 (JSON 형식)
     """
     # 상태 확인
     if not status_info:
-        return "분석 상태 정보가 없습니다."
+        return {
+            "action": "generate_answer",
+            "final_answer": "분석 상태 정보가 없습니다."
+        }
         
     status = status_info.get("status", "")
     question = status_info.get("question", "")
@@ -307,7 +337,10 @@ def generate_final_answer(status_info: Dict[str, Any]) -> str:
     if status == "completed":
         # 이미 생성된 final_answer가 있는지 확인
         if "final_answer" in status_info and status_info["final_answer"]:
-            return status_info["final_answer"]
+            return {
+                "action": "generate_answer",
+                "final_answer": status_info["final_answer"]
+            }
             
         # 코드와 결과를 분석하여 포괄적인 답변 생성
         python_code = status_info.get("python_code", "")
@@ -380,7 +413,10 @@ def generate_final_answer(status_info: Dict[str, Any]) -> str:
                 "visualization_info": visualization_info
             })
             
-            return final_answer
+            return {
+                "action": "generate_answer",
+                "final_answer": final_answer
+            }
             
         except Exception as e:
             # LLM 체인에 오류 발생 시 기본 포맷 사용
@@ -403,15 +439,24 @@ def generate_final_answer(status_info: Dict[str, Any]) -> str:
             if analysis_summary:
                 answer += f"\n\n추가 정보: {analysis_summary}"
             
-            return answer
+            return {
+                "action": "generate_answer",
+                "final_answer": answer
+            }
     
     # completed 상태가 아닌 경우 - 오류 또는 진행 중
     if status == "error":
         error_message = status_info.get("error_message", "")
-        return f"죄송합니다. 분석 중 오류가 발생했습니다: {error_message}"
+        return {
+            "action": "generate_answer",
+            "final_answer": f"죄송합니다. 분석 중 오류가 발생했습니다: {error_message}"
+        }
     
     # 진행 중인 경우
-    return "아직 분석이 완료되지 않았습니다. 처리 중입니다..."
+    return {
+        "action": "generate_answer",
+        "final_answer": "아직 분석이 완료되지 않았습니다. 처리 중입니다..."
+    }
 
 # @tool
 # def analyze_error(status_info: Dict[str, Any]) -> Dict[str, Any]:

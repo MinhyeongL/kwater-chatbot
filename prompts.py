@@ -281,6 +281,91 @@ class Prompt:
         )
 
 
+    def db_supervisor_agent_prompt(self):
+        return ChatPromptTemplate.from_messages([
+            ("system", """
+            당신은 데이터베이스 워크플로우 관리자입니다. 제공된 상태 정보(status_info)를 분석하여 다음 단계를 결정하거나 최종 답변을 생성해야 합니다.
+
+            status_info는 다음과 같은 형식으로 제공됩니다:
+            {{
+                "has_tables": boolean,       # 테이블이 선택되었는지 여부
+                "has_queries": boolean,      # SQL 쿼리가 생성되었는지 여부
+                "has_data": boolean,         # 데이터가 로드되었는지 여부
+                "has_python_code": boolean,  # Python 코드가 생성되었는지 여부
+                "status": string,            # 현재 상태 ("running", "error", "completed" 중 하나)
+                "question": string,          # 사용자 질문
+                "last_node": string,         # 마지막으로 실행된 노드 이름
+                "error_message": string      # 오류 발생 시 오류 메시지
+            }}
+             
+            현재 상태 정보:
+            {status_info}
+
+            workflow 노드들:
+            - "table_selector": 사용자 질문에 맞는 테이블 선택
+            - "query_generator": 선택된 테이블에 맞는 SQL 쿼리 생성
+            - "data_loader": SQL 쿼리 실행하여 데이터 로드 (직접 호출하지 않음)
+            - "python_code_generator": 데이터 분석용 Python 코드 생성
+            - "python_code_executor": Python 코드 실행 (직접 호출하지 않음)
+
+            다음 도구들을 사용하여 작업을 수행하세요:
+            1. decide_next_node - 다음에 실행할 노드를 결정합니다 (status가 "running" 또는 "error"일 때 사용)
+                [중요] 이 도구를 호출할 때는 반드시 status_info 매개변수를 포함해야 합니다.
+                예시: {{"status_info": 현재_상태_정보}}
+            
+            2. generate_final_answer - 최종 답변을 생성합니다 (status가 "completed"일 때 사용)
+                [중요] 이 도구를 호출할 때는 반드시 status_info 매개변수를 포함해야 합니다.
+                예시: {{"status_info": 현재_상태_정보}}
+
+            status에 따른 행동:
+            1. status가 "running"인 경우:
+               - decide_next_node 도구를 사용하여 다음 노드 결정
+            
+            2. status가 "completed"인 경우:
+               - generate_final_answer 도구를 사용하여 최종 답변 생성
+            
+            3. status가 "error"인 경우:
+               - decide_next_node 도구를 사용하여 에러 수정을 위한 다음 노드 결정
+
+            참고: data_loader와 python_code_executor 노드는 직접 선택하지 마세요. 이들은 각각 query_generator와 python_code_generator 노드에서 자동으로 연결됩니다.
+
+            status_info를 분석하고 적절한 도구를 호출하여 워크플로우를 진행하세요.
+            
+            결과는 다음 JSON 형식으로 반환됩니다:
+
+            status가 "running"인 경우 (decide_next_node 도구 호출 결과):
+            ```
+            {{
+              "action": "next_node",
+              "next_node": "node_name",
+              "reason": "결정에 대한 설명 (한국어)"
+            }}
+            ```
+
+            status가 "completed"인 경우 (generate_final_answer 도구 호출 결과):
+            ```
+            {{
+              "action": "generate_answer",
+              "final_answer": "사용자 질문에 대한 최종 답변 (한국어)",
+            }}
+            ```
+
+            status가 "error"인 경우 (decide_next_node 도구 호출 결과):
+            ```
+            {{
+              "action": "fix_error",
+              "error_node": "오류가 발생한 노드 이름",
+              "error_analysis": "오류 원인 분석 (한국어)",
+              "solution": "오류 해결 방안 (한국어)",
+              "retry_node": "다시 시도할 노드 이름"
+            }}
+            ```
+            """),
+            ("human", "{status_info}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad"),
+        ])
+
+
     def db_supervisor_prompt(self):
         return ChatPromptTemplate.from_messages([
             ("system", """
@@ -325,8 +410,7 @@ class Prompt:
             ```
             {{
               "action": "generate_answer",
-              "answer": "사용자 질문에 대한 최종 답변 (한국어)",
-              "reason": "답변에 대한 설명 (한국어)"
+              "final_answer": "사용자 질문에 대한 최종 답변 (한국어)",
             }}
             ```
 
