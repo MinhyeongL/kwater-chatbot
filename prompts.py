@@ -504,6 +504,32 @@ class Prompt:
             merged_df = pd.merge(df_tag_mng, df_dict['TB_C_RT'], left_on='tag_id', right_on='TAG_SN', how='inner')
             ```
         - 주의: 테이블 간 매칭이 항상 일관되게 동작하지 않을 수 있으므로, 병합 결과를 항상 확인하세요.
+        
+        - 날짜 필터링 시 타입 일치 주의:
+            ```
+            # 날짜 필터링 - 올바른 방법
+            import datetime
+            # 방법 1: datetime.date 객체 사용
+            target_date = datetime.date(2025, 3, 8)
+            df['date'] = df['UPD_TI'].dt.date
+            filtered_df = df[df['date'] == target_date]
+            
+            # 방법 2: 문자열 변환 비교
+            filtered_df = df[df['UPD_TI'].dt.strftime('%Y-%m-%d') == '2025-03-08']
+            ```
+        
+        - 데이터 타입 변환 주의:
+            ```
+            # 데이터 타입 확인
+            print(df_rt.dtypes)
+            
+            # TAG_VAL이 문자열인 경우 숫자로 변환 (항상 코드 시작 부분에 추가)
+            if df_rt['TAG_VAL'].dtype == 'object':
+                df_rt['TAG_VAL'] = pd.to_numeric(df_rt['TAG_VAL'], errors='coerce')
+                
+            # 다른 컬럼의 경우에도 필요하면 타입 변환
+            # df_rt['QLT'] = pd.to_numeric(df_rt['QLT'], errors='coerce')
+            ```
             
             다음과 같은 형식으로 코드를 작성하세요:
             ```python
@@ -515,7 +541,11 @@ class Prompt:
             # import seaborn as sns
             
             # 데이터 접근 및 전처리
-            df = df_dict['테이블명']
+            df_rt = df_dict['TB_C_RT']
+            
+            # 데이터 타입 확인 및 변환
+            if df_rt['TAG_VAL'].dtype == 'object':
+                df_rt['TAG_VAL'] = pd.to_numeric(df_rt['TAG_VAL'], errors='coerce')
             
             # 데이터 분석
             ...
